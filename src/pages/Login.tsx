@@ -5,39 +5,139 @@ import { useAuth } from '../auth/AuthProvider'
 
 export default function Login() {
   const { user } = useAuth()
+  const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
+  const [password, setPassword] = useState('')
+  const [hostelCode, setHostelCode] = useState('')
+  const [room, setRoom] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [hostelName, setHostelName] = useState<string | null>(null)
 
-  if (user) return <Navigate to="/" replace />
+  if (user && !busy) return <Navigate to="/" replace />
 
-  async function submit(e: FormEvent) {
+  async function handleCodeChange(val: string) {
+    const clean = val.toUpperCase().trim()
+    setHostelCode(clean)
+    setError('')
+    if (clean.length >= 3) {
+      const { data, error } = await supabase.rpc('hostel_name_for_code', { code: clean })
+      if (error) console.error('lookup error:', error.message)
+      setHostelName((data as string | null) ?? null)
+    } else {
+      setHostelName(null)
+    }
+  }
+
+  function switchMode(m: 'login' | 'signup') {
+    setMode(m)
+    setError('')
+    setPassword('')
+  }
+
+  // Existing user: email + password only
+  async function logIn(e: FormEvent) {
     e.preventDefault()
     setBusy(true); setError('')
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    })
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
     setBusy(false)
-    if (error) setError(error.message)
-    else setSent(true)
+    if (error) {
+      setError(error.message === 'Invalid login credentials'
+        ? 'Email ya password galat hai.'
+        : error.message)
+    }
+  }
+
+  // New user: check passcode, create account, join hostel, save room
+  async function signUp(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true); setError('')
+
+    const { data: name, error: lookupErr } = await supabase.rpc('hostel_name_for_code', { code: hostelCode })
+    if (lookupErr) { setBusy(false); setError('Lookup error: ' + lookupErr.message); return }
+    if (!name) {
+      setBusy(false)
+      setError('Galat Hostel Passcode! Kripya apne hostel group se sahi code lein.')
+      return
+    }
+    setHostelName(name as string)
+
+    const { data: su, error: suErr } = await supabase.auth.signUp({ email: email.trim(), password })
+    if (suErr) { setBusy(false); setError(suErr.message); return }
+
+    // No session means "Confirm email" is still ON in Supabase settings
+    if (!su.session) {
+      setBusy(false)
+      setError('Account ban gaya par login nahi hua. Supabase mein "Confirm email" OFF karo.')
+      return
+    }
+
+    const { error: je } = await supabase.rpc('join_community', { code: hostelCode })
+    if (je) {
+      await supabase.auth.signOut()
+      setBusy(false)
+      setError(je.message)
+      return
+    }
+
+    if (room.trim() && su.user) {
+      await supabase.from('member_private').upsert({ user_id: su.user.id, room_no: room.trim() })
+    }
+    setBusy(false)
   }
 
   return (
-    <div className="center-card">
-      <h1>kartmeto</h1>
-      <p className="muted">Order together with people nearby. Save on delivery.</p>
-      {sent ? (
-        <p>Check <b>{email}</b> for your login link.</p>
-      ) : (
-        <form onSubmit={submit}>
-          <input type="email" required placeholder="you@example.com" value={email}
-            onChange={(e) => setEmail(e.target.value)} />
-          <button className="btn" disabled={busy}>{busy ? 'Sending…' : 'Send magic link'}</button>
-          {error && <p className="error">{error}</p>}
+    <div className="login">
+      <div className="login-inner">
+        <img src="/logo.png" alt="KartMeto" className="login-logo" />
+        <h2>Don&apos;t Order Alone.</h2>
+        <p className="sub">Your Mates Are Your Backup</p>
+
+        <form onSubmit={mode === 'login' ? logIn : signUp}>
+          <label>Email Address</label>
+          <input type="email" required placeholder="your.name@college.edu.in" value={email}
+            autoComplete="email" onChange={(e) => setEmail(e.target.value)} />
+
+          <label>Password</label>
+          <input type="password" required minLength={6} placeholder="Min 6 characters" value={password}
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            onChange={(e) => setPassword(e.target.value)} />
+
+          {mode === 'signup' && (
+            <>
+              <div className="row">
+                <div className="grow">
+                  <label>Hostel Passcode</label>
+                  <input required placeholder="e.g. BLK-A" value={hostelCode}
+                    onChange={(e) => handleCodeChange(e.target.value)} style={{ textTransform: 'uppercase' }} />
+                </div>
+                <div className="room">
+                  <label>Room No.</label>
+                  <input placeholder="302" value={room} onChange={(e) => setRoom(e.target.value)} />
+                </div>
+              </div>
+              {hostelName && <div className="pill">📍 Hostel: <b>{hostelName}</b></div>}
+            </>
+          )}
+
+          <button className="cta" disabled={busy}>
+            {busy
+              ? (mode === 'login' ? 'Logging in…' : 'Creating account…')
+              : (mode === 'login' ? 'Log In →' : 'Create Account →')}
+          </button>
+
+          {mode === 'login' ? (
+            <button type="button" className="textbtn" onClick={() => switchMode('signup')}>
+              Naye ho? Create account
+            </button>
+          ) : (
+            <button type="button" className="textbtn" onClick={() => switchMode('login')}>
+              Pehle se account hai? Log in
+            </button>
+          )}
         </form>
-      )}
+        {error && <p className="error">{error}</p>}
+      </div>
     </div>
   )
 }
