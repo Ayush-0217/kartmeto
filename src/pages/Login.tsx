@@ -1,3 +1,4 @@
+
 import { useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -20,8 +21,13 @@ export default function Login() {
     const clean = val.toUpperCase().trim()
     setHostelCode(clean)
     setError('')
+
     if (clean.length >= 3) {
-      const { data, error } = await supabase.rpc('hostel_name_for_code', { code: clean })
+      const { data, error } = await supabase.rpc(
+        'hostel_name_for_code',
+        { code: clean }
+      )
+
       if (error) console.error('lookup error:', error.message)
       setHostelName((data as string | null) ?? null)
     } else {
@@ -35,44 +41,72 @@ export default function Login() {
     setPassword('')
   }
 
-  // Existing user: email + password only
   async function logIn(e: FormEvent) {
     e.preventDefault()
-    setBusy(true); setError('')
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+    setBusy(true)
+    setError('')
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    })
+
     setBusy(false)
+
     if (error) {
-      setError(error.message === 'Invalid login credentials'
-        ? 'Email ya password galat hai.'
-        : error.message)
+      setError(
+        error.message === 'Invalid login credentials'
+          ? 'Email ya password galat hai.'
+          : error.message
+      )
     }
   }
 
-  // New user: check passcode, create account, join hostel, save room
   async function signUp(e: FormEvent) {
     e.preventDefault()
-    setBusy(true); setError('')
+    setBusy(true)
+    setError('')
 
-    const { data: name, error: lookupErr } = await supabase.rpc('hostel_name_for_code', { code: hostelCode })
-    if (lookupErr) { setBusy(false); setError('Lookup error: ' + lookupErr.message); return }
+    const { data: name, error: lookupErr } = await supabase.rpc(
+      'hostel_name_for_code',
+      { code: hostelCode }
+    )
+
+    if (lookupErr) {
+      setBusy(false)
+      setError('Lookup error: ' + lookupErr.message)
+      return
+    }
+
     if (!name) {
       setBusy(false)
       setError('Galat Hostel Passcode! Kripya apne hostel group se sahi code lein.')
       return
     }
+
     setHostelName(name as string)
 
-    const { data: su, error: suErr } = await supabase.auth.signUp({ email: email.trim(), password })
-    if (suErr) { setBusy(false); setError(suErr.message); return }
+    const { data: su, error: suErr } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+    })
 
-    // No session means "Confirm email" is still ON in Supabase settings
+    if (suErr) {
+      setBusy(false)
+      setError(suErr.message)
+      return
+    }
+
     if (!su.session) {
       setBusy(false)
       setError('Account ban gaya par login nahi hua. Supabase mein "Confirm email" OFF karo.')
       return
     }
 
-    const { error: je } = await supabase.rpc('join_community', { code: hostelCode })
+    const { error: je } = await supabase.rpc('join_community', {
+      code: hostelCode,
+    })
+
     if (je) {
       await supabase.auth.signOut()
       setBusy(false)
@@ -81,42 +115,84 @@ export default function Login() {
     }
 
     if (room.trim() && su.user) {
-      await supabase.from('member_private').upsert({ user_id: su.user.id, room_no: room.trim() })
+      await supabase.from('member_private').upsert({
+        user_id: su.user.id,
+        room_no: room.trim(),
+      })
     }
+
     setBusy(false)
   }
 
   return (
     <div className="login">
       <div className="login-inner">
-        <img src="/logo.png" alt="KartMeto" className="login-logo" />
+
+        {/* Stacked transparent KartMeto logo */}
+        <div className="login-brand">
+          <img
+  src="/logo-horizontal.png"
+  alt="KartMeto"
+  className="login-logo"
+/>
+        </div>
+
         <h2>Don&apos;t Order Alone.</h2>
         <p className="sub">Your Mates Are Your Backup</p>
 
         <form onSubmit={mode === 'login' ? logIn : signUp}>
           <label>Email Address</label>
-          <input type="email" required placeholder="your.name@college.edu.in" value={email}
-            autoComplete="email" onChange={(e) => setEmail(e.target.value)} />
+
+          <input
+            type="email"
+            required
+            placeholder="your.name@college.edu.in"
+            value={email}
+            autoComplete="email"
+            onChange={(e) => setEmail(e.target.value)}
+          />
 
           <label>Password</label>
-          <input type="password" required minLength={6} placeholder="Min 6 characters" value={password}
+
+          <input
+            type="password"
+            required
+            minLength={6}
+            placeholder="Min 6 characters"
+            value={password}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            onChange={(e) => setPassword(e.target.value)} />
+            onChange={(e) => setPassword(e.target.value)}
+          />
 
           {mode === 'signup' && (
             <>
               <div className="row">
                 <div className="grow">
                   <label>Hostel Passcode</label>
-                  <input required placeholder="e.g. BLK-A" value={hostelCode}
-                    onChange={(e) => handleCodeChange(e.target.value)} style={{ textTransform: 'uppercase' }} />
+                  <input
+                    required
+                    placeholder="e.g. BLK-A"
+                    value={hostelCode}
+                    onChange={(e) => handleCodeChange(e.target.value)}
+                    style={{ textTransform: 'uppercase' }}
+                  />
                 </div>
+
                 <div className="room">
                   <label>Room No.</label>
-                  <input placeholder="302" value={room} onChange={(e) => setRoom(e.target.value)} />
+                  <input
+                    placeholder="302"
+                    value={room}
+                    onChange={(e) => setRoom(e.target.value)}
+                  />
                 </div>
               </div>
-              {hostelName && <div className="pill">📍 Hostel: <b>{hostelName}</b></div>}
+
+              {hostelName && (
+                <div className="pill">
+                  📍 Hostel: <b>{hostelName}</b>
+                </div>
+              )}
             </>
           )}
 
@@ -127,15 +203,24 @@ export default function Login() {
           </button>
 
           {mode === 'login' ? (
-            <button type="button" className="textbtn" onClick={() => switchMode('signup')}>
-              Naye ho? Create account
+            <button
+              type="button"
+              className="textbtn"
+              onClick={() => switchMode('signup')}
+            >
+              New here? Create an account
             </button>
           ) : (
-            <button type="button" className="textbtn" onClick={() => switchMode('login')}>
-              Pehle se account hai? Log in
+            <button
+              type="button"
+              className="textbtn"
+              onClick={() => switchMode('login')}
+            >
+              Already have an account? Log in
             </button>
           )}
         </form>
+
         {error && <p className="error">{error}</p>}
       </div>
     </div>

@@ -117,7 +117,8 @@ export default function PoolRoom() {
     }
   }
 
-  const lockedOrPlaced = ['locked', 'placed'].includes(order.status)
+  // "locked" aur "ordering" dono collection/preparation states hain — banner in dono me dikhna chahiye
+  const lockedOrPlaced = ['locked', 'ordering', 'placed'].includes(order.status)
   const ofd = order.status === 'out_for_delivery'
   const doneStates = ['received', 'distributed', 'completed'].includes(order.status)
 
@@ -172,7 +173,19 @@ export default function PoolRoom() {
           </>
         )}
 
-        {lockedOrPlaced && (
+        {order.status === 'locked' && (
+          <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+            Pool locked hai. Members payment kar rahe hain — jab sab confirm ho jayein, host order place karega.
+          </div>
+        )}
+
+        {order.status === 'ordering' && (
+          <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+            Sab payments confirm ho gayi hain. Host abhi {plat.name} app mein order place kar raha hai.
+          </div>
+        )}
+
+        {lockedOrPlaced && order.status === 'placed' && (
           <div className="locked-banner">
             <span className="lb-check">✓</span>
             <div>
@@ -337,7 +350,27 @@ export default function PoolRoom() {
             )
           })}
 
-          {order.status === 'open' && <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('placed')}>Lock Pool & Place Order</button>}
+          {/* open -> locked: pool lock karo, members se payment collection shuru */}
+          {order.status === 'open' && (
+            <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('locked')}>
+              Lock Pool (Start Collecting Payments)
+            </button>
+          )}
+
+          {/* locked -> ordering: sab members ka payment confirmed hone ke baad hi ye allowed hoga (DB check karta hai) */}
+          {order.status === 'locked' && (
+            <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('ordering')}>
+              Start Ordering
+            </button>
+          )}
+
+          {/* ordering -> placed: host ne actual {plat.name} app mein order place kar diya */}
+          {order.status === 'ordering' && (
+            <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('placed')}>
+              Mark Order Placed
+            </button>
+          )}
+
           {order.status === 'placed' && <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('out_for_delivery')}>Mark Out for Delivery</button>}
           {order.status === 'out_for_delivery' && <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('received')}>Order Arrived</button>}
           {order.status === 'received' && <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('completed')}>Mark Completed</button>}

@@ -78,8 +78,87 @@ input { width:100%; min-height:48px; padding:0 14px; margin:8px 0; border:1px so
 
 /* ---------- App shell (430px column) ---------- */
 .app { max-width:430px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; background:var(--bg); }
-.hdr { display:flex; justify-content:space-between; align-items:center; padding:20px 25px 0; }
-.hdr-logo { height:39px; width:auto; }
+
+/* ===== KartMeto Professional Header ===== */
+
+.hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px 0;
+  min-height: 60px;
+}
+
+.brand-link {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
+.hdr-logo {
+  display: block;
+  width: 120px;
+  height: 36px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.hostel-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  max-width: calc(100% - 136px);
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  background: rgba(232,220,196,.08);
+  border-radius: 999px;
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.hostel-pill span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hostel-pill svg {
+  flex: 0 0 auto;
+}
+
+@media (min-width: 900px) {
+  .hdr {
+    padding: 24px 24px 0;
+    min-height: 64px;
+  }
+
+  .hdr-logo {
+    width: 125px;
+    height: 36px;
+  }
+}
+
+@media (max-width: 360px) {
+  .hdr {
+    padding-inline: 18px;
+    gap: 10px;
+  }
+
+  .hdr-logo {
+  width: 125px;
+  height: 36px;
+  object-fit: contain;
+  object-position: left center;
+}
+}
+
 .hostel-pill { display:flex; align-items:center; gap:8px; height:41px; padding:0 14px 0 18px; border:1px solid var(--border); background:var(--tint); border-radius:var(--pill); color:var(--fg); text-decoration:none; font-size:15px; font-weight:600; }
 .content { flex:1; padding:0 25px 110px; }
 .search { display:flex; align-items:center; gap:12px; height:49px; margin:18px 0 0; padding:0 18px; background:var(--surface-2); border-radius:var(--pill); color:var(--faint); font-size:16px; }
@@ -456,4 +535,116 @@ body {
 
 @media (min-width: 900px) {
   .tiles .tile { height: auto; min-height: 96px; }
+}
+
+
+/* ===== KartMeto Professional Login ===== */
+
+.login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+}
+
+.login-inner {
+  width: 100%;
+  max-width: 430px;
+  padding: 38px 34px;
+  border: 1px solid rgba(232,220,196,.12);
+  border-radius: 24px;
+  background: rgba(20,41,28,.72);
+  box-shadow: 0 24px 70px rgba(0,0,0,.18);
+}
+
+/* Horizontal logo */
+.login-logo {
+  display: block;
+  width: 165px;
+  height: auto;
+  object-fit: contain;
+  margin: 0 auto 30px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.login-inner h2 {
+  text-align: center;
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -1px;
+  margin: 0 0 10px;
+  color: #F3EBDA;
+}
+
+.login-inner .sub {
+  text-align: center;
+  font-size: 15px;
+  margin: 0 0 34px;
+  color: rgba(232,220,196,.72);
+}
+
+.login-inner form label {
+  display: block;
+  margin: 0 0 9px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.login-inner form input {
+  width: 100%;
+  min-height: 52px;
+  margin-bottom: 22px;
+  border-radius: 13px;
+  padding: 0 16px;
+  background: #294638;
+  border: 1px solid rgba(232,220,196,.17);
+  color: #F3EBDA;
+  font-size: 15px;
+  outline: none;
+}
+
+.login-inner form input:focus {
+  border-color: #A8C994;
+  box-shadow: 0 0 0 3px rgba(168,201,148,.12);
+}
+
+.login-inner .cta {
+  width: 100%;
+  min-height: 54px;
+  border-radius: 14px;
+  margin-top: 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.login-inner .textbtn {
+  display: block;
+  margin: 22px auto 0;
+  background: none;
+  border: none;
+  color: #E8DCC4;
+  font-size: 14px;
+}
+
+@media (max-width: 480px) {
+  .login {
+    padding: 20px 16px;
+  }
+
+  .login-inner {
+    padding: 30px 22px;
+  }
+
+  .login-logo {
+    width: 150px;
+    height: auto;
+    margin-bottom: 26px;
+  }
+
+  .login-inner h2 {
+    font-size: 28px;
+  }
 }
