@@ -1,6 +1,9 @@
 /* Host tools: Command Center, Cart to Build, Smart Handover, Trust modal
    Theme variables (--bg, --surface, --accent ...) come from main.css. Load main.css first. */
-.hcc, .ctb, .hov { padding: 18px 0 150px; }
+/* .hcc and .hov are followed by a CTA rendered by PoolRoom, whose wrapper already reserves room for the dock,
+   so they need no bottom padding of their own. .ctb is the last thing on its page and keeps it. */
+.ctb { padding: 18px 0 150px; }
+.hcc, .hov { padding: 18px 0 0; }
 .hcc-title { display:flex; align-items:center; gap:14px; margin-bottom:16px; }
 .hcc-title h2 { font-size:25px; font-weight:700; margin:0; }
 .hcc-title p { margin:3px 0 0; font-size:14px; color:var(--muted); }
@@ -14,6 +17,7 @@
 
 .hcc-bump { display:flex; flex-direction:column; gap:6px; padding:14px 16px; margin-bottom:14px; background:var(--tint); border:1px solid var(--tint-border); border-radius:14px; font-size:14px; }
 .hcc-bump button { align-self:flex-start; height:38px; padding:0 18px; background:none; border:1px solid var(--accent); border-radius:var(--pill); color:var(--accent); font-weight:600; font-family:inherit; }
+.hcc-bump button:disabled { opacity:.55; }
 
 .hcc-list { display:flex; flex-direction:column; gap:10px; }
 .hcc-row { display:flex; align-items:center; gap:14px; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:16px; }
@@ -33,8 +37,9 @@
 .hcc-btn.green { background:none; border:1px solid var(--ok); color:var(--ok); }
 .hcc-btn:disabled { opacity:.55; }
 
-/* sticky bottom action (sits above the bottom nav) */
-.hcc-dock { position:fixed; left:50%; transform:translateX(-50%); bottom:84px; width:100%; max-width:430px; padding:12px 20px; display:flex; flex-direction:column; gap:10px; background:linear-gradient(transparent, var(--bg) 35%); z-index:9; }
+/* sticky bottom action. The bottom nav is hidden on every page that uses this (/pool/:id, /create),
+   so it sits at the screen edge, clear of the iPhone home bar. */
+.hcc-dock { position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:100%; max-width:430px; padding:12px 20px calc(14px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:10px; background:linear-gradient(transparent, var(--bg) 35%); z-index:9; }
 .hcc-share { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:54px; background:var(--accent); border:0; border-radius:var(--pill); color:var(--on-accent); font-size:18px; font-weight:700; font-family:inherit; }
 .hcc-share:disabled { opacity:.5; }
 .hcc-share.primary { background:var(--accent); }

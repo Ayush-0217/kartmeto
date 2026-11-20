@@ -6,6 +6,7 @@ type Props = {
   orderId: string
   platformName: string
   communityName: string
+  initialItems?: { name: string; price: number; qty: number }[]
   onClose: () => void
   onDone: () => void
 }
@@ -21,9 +22,14 @@ function XIcon() {
 let seq = 0
 const newId = () => `i${++seq}-${Date.now()}`
 
-export default function AddItemsModal({ orderId, platformName, communityName, onClose, onDone }: Props) {
+export default function AddItemsModal({ orderId, platformName, communityName, initialItems, onClose, onDone }: Props) {
   const [tab, setTab] = useState<'link' | 'manual'>('manual')
-  const [items, setItems] = useState<Item[]>([{ id: newId(), name: '', price: '', qty: 1 }])
+  // Editing starts from the member's existing items so a re-submit never wipes them.
+  const [items, setItems] = useState<Item[]>(() =>
+    initialItems && initialItems.length > 0
+      ? initialItems.map((it) => ({ id: newId(), name: it.name, price: String(it.price), qty: it.qty }))
+      : [{ id: newId(), name: '', price: '', qty: 1 }],
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -41,7 +47,10 @@ export default function AddItemsModal({ orderId, platformName, communityName, on
     setSaving(true)
     setError(null)
     const payload = valid.map((it) => ({ name: it.name.trim(), price: Number(it.price), qty: it.qty }))
-    const { error: rpcErr } = await supabase.rpc('submit_my_items', { p_order_id: orderId, p_items_json: payload })
+    const { error: rpcErr } = await supabase.rpc('submit_my_items', {
+      p_order_id: orderId,
+      p_items_json: JSON.stringify(payload),
+    })
     setSaving(false)
     if (rpcErr) { setError(rpcErr.message); return }
     onDone()

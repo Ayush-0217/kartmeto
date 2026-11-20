@@ -648,3 +648,6 @@ body {
     font-size: 28px;
   }
 }
+
+/* Pages without the bottom nav (/pool/:id, /create, /join) don't need the 130px nav clearance */
+.content:not(.has-nav) { padding-bottom: 24px; }

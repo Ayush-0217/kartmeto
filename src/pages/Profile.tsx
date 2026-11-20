@@ -1,13 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
 import { useProfile } from '../lib/useProfile'
 import { colorOf } from '../lib/pool'
 import type { AppCtx } from '../lib/useCommunity'
-
-// ⚠️ Stats (saved amount, pools joined) are DUMMY for now — same approach as Activity.tsx.
-// Real calculation will need a query over completed orders once we wire it up.
 
 function PinIcon() {
   return (
@@ -66,19 +63,78 @@ function ChevronIcon() {
   )
 }
 
+type Field = 'name' | 'room' | 'upi'
+
+const FIELD_META: Record<Field, { label: string; placeholder: string; inputMode?: 'text' | 'email' }> = {
+  name: { label: 'Your name', placeholder: 'e.g. Rahul Sharma' },
+  room: { label: 'Room number', placeholder: 'e.g. 204' },
+  upi: { label: 'UPI ID (hosts receive pool payments here)', placeholder: 'yourname@okaxis', inputMode: 'email' },
+}
+
+const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+
 export default function Profile() {
   const { user } = useAuth()
   const { community } = useOutletContext<AppCtx>()
-  const { profile, loading } = useProfile(user?.id)
+  const { profile, loading, saveName, saveRoom, saveUpi } = useProfile(user?.id)
   const [notifOn, setNotifOn] = useState(true) // visual-only, not persisted
+
+  const [editing, setEditing] = useState<Field | null>(null)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // Real stats from completed pools (user_trust RPC); shows "—" until loaded or if unavailable
+  const [stats, setStats] = useState<{ saved: number; pools: number } | null>(null)
+  useEffect(() => {
+    if (!user?.id) return
+    let live = true
+    supabase.rpc('user_trust', { p_user_id: user.id }).then(({ data, error }) => {
+      if (!live || error || !data) return
+      const d = data as { saved_est?: number; pools_joined?: number }
+      setStats({ saved: Number(d.saved_est ?? 0), pools: Number(d.pools_joined ?? 0) })
+    })
+    return () => { live = false }
+  }, [user?.id])
 
   const name = profile?.display_name || user?.email?.split('@')[0] || 'Member'
   const roomLine = community?.name
     ? `${community.name}${profile?.room_no ? `, Room ${profile.room_no}` : ''}`
     : 'Join a hostel to see this'
 
+  function startEdit(f: Field) {
+    setMsg(null)
+    setEditing(f)
+    setDraft(
+      f === 'name' ? (profile?.display_name ?? '')
+        : f === 'room' ? (profile?.room_no ?? '')
+        : (profile?.default_upi_id ?? ''),
+    )
+  }
+
+  async function save() {
+    if (!editing) return
+    setSaving(true)
+    setMsg(null)
+    const err =
+      editing === 'name' ? await saveName(draft)
+        : editing === 'room' ? await saveRoom(draft)
+        : await saveUpi(draft)
+    setSaving(false)
+    if (err) setMsg({ ok: false, text: err })
+    else { setMsg({ ok: true, text: 'Saved' }); setEditing(null) }
+  }
+
+  const rowProps = (f: Field) => ({
+    role: 'button' as const,
+    tabIndex: 0,
+    style: { cursor: 'pointer' },
+    onClick: () => startEdit(f),
+    onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') startEdit(f) },
+  })
+
   return (
-    <div style={{ paddingTop: 20 }}>
+    <div style={{ paddingTop: 20, paddingBottom: 16 }}>
       <div className="profile-head">
         {profile?.avatar_url ? (
           <img className="profile-avatar" src={profile.avatar_url} alt="" />
@@ -90,32 +146,35 @@ export default function Profile() {
         <div>
           <div className="profile-name">{loading ? '…' : name}</div>
           <div className="profile-sub"><PinIcon /> {roomLine}</div>
+          <button className="textbtn" style={{ width: 'auto', minHeight: 0, padding: 0, marginTop: 4, textAlign: 'left' }} onClick={() => startEdit('name')}>Edit name</button>
         </div>
       </div>
 
       <div className="stats-box">
         <div className="stat">
-          <div className="stat-num save">₹1,420</div>
+          <div className="stat-num save">{stats ? inr(stats.saved) : '—'}</div>
           <div className="stat-label">Total Delivery Charges Saved</div>
         </div>
         <div className="stats-divider" />
         <div className="stat">
-          <div className="stat-num">18</div>
+          <div className="stat-num">{stats ? stats.pools : '—'}</div>
           <div className="stat-label">Pools Joined</div>
         </div>
       </div>
 
       <div className="setting-list">
-        <div className="setting-row">
+        <div className="setting-row" {...rowProps('room')}>
           <span className="setting-icon"><HomeIcon /></span>
           <span className="setting-text">Hostel & Room Address</span>
-          <span className="setting-value">{profile?.room_no ? `${community?.name ?? ''}, Room ${profile.room_no}` : community?.name ?? '—'}</span>
+          <span className="setting-value">
+            {profile?.room_no ? `${community?.name ?? ''}, Room ${profile.room_no}` : (community?.name ? `${community.name} • Add room` : '—')}
+          </span>
           <ChevronIcon />
         </div>
-        <div className="setting-row">
+        <div className="setting-row" {...rowProps('upi')}>
           <span className="setting-icon"><CardIcon /></span>
           <span className="setting-text">Payment Methods</span>
-          <span className="setting-value">UPI</span>
+          <span className="setting-value">{profile?.default_upi_id ? profile.default_upi_id : 'Add UPI ID'}</span>
           <ChevronIcon />
         </div>
         <div className="setting-row">
@@ -141,6 +200,34 @@ export default function Profile() {
           <ChevronIcon />
         </div>
       </div>
+
+      {editing && (
+        <div className="pay-card" style={{ marginTop: 16 }}>
+          <label className="item-label">{FIELD_META[editing].label}</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="item-input"
+              autoFocus
+              inputMode={FIELD_META[editing].inputMode}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save() }}
+              placeholder={FIELD_META[editing].placeholder}
+            />
+            <button className="cta-sm" style={{ width: 90, margin: 0 }} disabled={saving} onClick={save}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          <button className="textbtn" style={{ marginTop: 8 }} onClick={() => { setEditing(null); setMsg(null) }}>Cancel</button>
+          {editing === 'room' && (
+            <p className="muted" style={{ marginTop: 6, fontSize: 13 }}>
+              Your room is shown only to the host of a pool you join, at handover time.
+            </p>
+          )}
+        </div>
+      )}
+
+      {msg && <p className={msg.ok ? 'muted' : 'error'} style={{ marginTop: 12 }}>{msg.text}</p>}
 
       <button className="logout-btn" onClick={() => supabase.auth.signOut()}>
         <LogoutIcon /> Log Out

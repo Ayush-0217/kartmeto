@@ -1,4 +1,4 @@
-    import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './host.css'
 
 export type HandoverRoom = {
@@ -7,15 +7,17 @@ export type HandoverRoom = {
   name: string
   summary: string         // e.g. "Milk, Bread, Maggi..."
   delivered: boolean
+  due?: number            // extra amount to collect before handover (missed free-delivery limit)
 }
 
 type Props = {
   rooms: HandoverRoom[]
   ready: boolean          // true once the order has arrived
   onConfirm: (userId: string, pin: string) => Promise<string | null>   // returns an error message or null
+  onClearDue?: (userId: string) => Promise<string | null>              // marks the pending due as collected
 }
 
-export default function SmartHandover({ rooms, ready, onConfirm }: Props) {
+export default function SmartHandover({ rooms, ready, onConfirm, onClearDue }: Props) {
   const [sel, setSel] = useState<string | null>(null)
   const [digits, setDigits] = useState(['', '', '', ''])
   const [busy, setBusy] = useState(false)
@@ -32,6 +34,11 @@ export default function SmartHandover({ rooms, ready, onConfirm }: Props) {
   const pin = digits.join('')
   const label = (r: HandoverRoom) => (r.room ? r.room : r.name)
 
+  function resetDigits() {
+    setDigits(['', '', '', ''])
+    refs.current[0]?.focus()
+  }
+
   function setDigit(i: number, v: string) {
     const d = v.replace(/\D/g, '').slice(-1)
     setDigits((cur) => cur.map((x, k) => (k === i ? d : x)))
@@ -44,8 +51,8 @@ export default function SmartHandover({ rooms, ready, onConfirm }: Props) {
     setBusy(true); setError('')
     const err = await onConfirm(current.userId, pin)
     setBusy(false)
-    if (err) setError(err)
-    else { setDigits(['', '', '', '']); refs.current[0]?.focus() }
+    if (err) { setError(err); resetDigits() }
+    else resetDigits()
   }
 
   return (
@@ -78,7 +85,7 @@ export default function SmartHandover({ rooms, ready, onConfirm }: Props) {
             key={r.userId}
             className={`hov-row ${sel === r.userId && !r.delivered ? 'on' : ''}`}
             disabled={r.delivered}
-            onClick={() => { setSel(r.userId); setError('') }}
+            onClick={() => { setSel(r.userId); setError(''); resetDigits() }}
           >
             <span className="hov-room"><small>Room</small><b>{label(r)}</b></span>
             <span className="hov-bag"><b>K</b></span>
@@ -102,6 +109,22 @@ export default function SmartHandover({ rooms, ready, onConfirm }: Props) {
               <small>Ask {current ? label(current) : 'the member'} for the 4-digit PIN shown in their app</small>
             </div>
           </div>
+
+          {current && (current.due ?? 0) > 0 && onClearDue && (
+            <div className="hcc-bump" style={{ marginBottom: 10 }}>
+              <b>Collect ₹{current.due} before handover</b>
+              <span>The free-delivery limit was missed, so the delivery fee is split. Collect this from {label(current)}.</span>
+              <button
+                onClick={async () => {
+                  const e = await onClearDue(current.userId)
+                  if (e) setError(e)
+                }}
+              >
+                Due collected
+              </button>
+            </div>
+          )}
+
           <div className="hov-pin">
             {digits.map((d, i) => (
               <input

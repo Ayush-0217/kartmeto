@@ -11,7 +11,7 @@ import InviteSheet from '../components/InviteSheet'
 const TIMERS = [5, 10, 15]
 const MEMBER_OPTS = [3, 5, 0] // 0 = no limit
 
-// Placeholder defaults: mockup has no fee inputs (schema needs these columns)
+// Placeholder defaults: mockup has no fee inputs (the host can change them in the pool room while it is open)
 const DEFAULT_DELIVERY_FEE = 40
 const DEFAULT_FREE_THRESHOLD = 199
 
@@ -45,7 +45,11 @@ export default function CreateOrder() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
-  const [platform, setPlatform] = useState(params.get('platform') || PLATFORMS[0].name)
+  // Accept either the platform name or its chip label; fall back to the first store
+  const qp = params.get('platform')
+  const [platform, setPlatform] = useState(
+    PLATFORMS.find((p) => p.name === qp || p.chip === qp)?.name ?? PLATFORMS[0].name,
+  )
   const [timer, setTimer] = useState(10)
   const [maxMembers, setMaxMembers] = useState(5)
 
@@ -62,6 +66,7 @@ export default function CreateOrder() {
     const { data, error: insErr } = await supabase
       .from('order_requests')
       .insert({
+        creator_id: user.id,
         community_id: community.id,
         platform,
         title: `${platform} Pool`,
@@ -69,7 +74,7 @@ export default function CreateOrder() {
         est_cart_value: 0,
         free_delivery_threshold: DEFAULT_FREE_THRESHOLD,
         delivery_fee: DEFAULT_DELIVERY_FEE,
-        max_members: maxMembers || null,
+        max_members: maxMembers || null, // null = no limit (needs max_members to be nullable, see 01_required.sql)
         window_start: now.toISOString(),
         window_end: end.toISOString(),
         status: 'open',
@@ -86,7 +91,7 @@ export default function CreateOrder() {
       <div className="create-topbar">
         <button className="create-cancel" onClick={() => navigate(-1)}>Cancel</button>
         <span className="create-title">Start a Pool</span>
-        <button className="create-next" disabled>Next</button>
+        <span style={{ width: 48 }} />
       </div>
 
       <label className="form-label" style={{ marginTop: 20 }}>Select Store</label>
@@ -138,7 +143,7 @@ export default function CreateOrder() {
           orderId={newOrderId}
           platformName={platformOf(platform).name}
           communityName={community?.name ?? ''}
-          onClose={() => navigate(`/pool/${newOrderId}`)}
+          onClose={() => navigate(`/pool/${newOrderId}`, { replace: true })}
         />
       )}
     </div>

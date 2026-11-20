@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { formatCartText, type CartLine } from '../lib/cart'
 
-// Photo + subtitle (+ optional unit) per product, keyed by the lowercase item name.
-// Put the PNGs in  public/products/  (or change the paths). Missing photo => letter tile.
 export type ProductMeta = { image?: string; subtitle?: string; unit?: string }
 
 export const DEFAULT_CATALOG: Record<string, ProductMeta> = {
@@ -18,12 +16,14 @@ type Props = {
   lines: CartLine[]
   memberCount: number
   store?: string
-  storeUrl?: string // kept so existing callers don't break; not shown
+  storeUrl?: string
   savedEst?: number
   catalog?: Record<string, ProductMeta>
-  logoSrc?: string // your logo.png
-  hostel?: string // text inside the top-right pill
+  logoSrc?: string
+  hostel?: string
   onBack?: () => void
+  onOrderPlaced?: () => void
+  busy?: boolean
 }
 
 function Thumb({ line, meta }: { line: CartLine; meta?: ProductMeta }) {
@@ -53,25 +53,29 @@ export default function CartToBuild({
   store,
   savedEst = 0,
   catalog = DEFAULT_CATALOG,
-  logoSrc = '/logo.png',
-  hostel = 'Hostl Block A',
+  logoSrc = '/logo-horizontal.png',
+  hostel = 'Hostel Block A',
   onBack,
+  onOrderPlaced,
+  busy = false,
 }: Props) {
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(formatCartText(lines, store))
+      setCopyFailed(false)
       setCopied(true)
       setTimeout(() => setCopied(false), 1800)
     } catch {
-      /* clipboard blocked */
+      setCopyFailed(true)
+      setTimeout(() => setCopyFailed(false), 2500)
     }
   }
 
   return (
-    <div className="ctb" style={{ paddingTop: 6 }}>
-      {/* Top bar: back, logo, hostel pill */}
+    <div className="ctb" style={{ paddingTop: 6, paddingBottom: 140 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 22 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
           <button
@@ -96,7 +100,6 @@ export default function CartToBuild({
         </div>
       </div>
 
-      {/* Title */}
       <div className="hcc-title" style={{ gap: 18, marginBottom: 14 }}>
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#f97810" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <path d="M2 3h2.5l2.2 11.2a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.1L20 7H5.4" />
@@ -109,7 +112,6 @@ export default function CartToBuild({
         </div>
       </div>
 
-      {/* Summary */}
       <div className="ctb-sum" style={{ padding: '12px 16px', gap: 12, marginBottom: 16 }}>
         <svg width="38" height="38" viewBox="0 0 24 24" fill="#f97810" style={{ flex: 'none' }}>
           <circle cx="12" cy="8" r="3" />
@@ -133,7 +135,6 @@ export default function CartToBuild({
         )}
       </div>
 
-      {/* Items */}
       <div className="ctb-list">
         {lines.map((l) => {
           const meta = catalog[l.key]
@@ -156,15 +157,19 @@ export default function CartToBuild({
         )}
       </div>
 
-      {/* Sticky Copy button */}
-      <div className="hcc-dock">
-        <button className="hcc-share" onClick={copy} disabled={lines.length === 0} style={{ height: 52, fontSize: 17 }}>
+      <div className="hcc-dock" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <button className="hcc-share" onClick={copy} disabled={lines.length === 0} style={{ height: 50, fontSize: 16 }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="9" y="9" width="11" height="11" rx="2" />
             <path d="M5 15V6a2 2 0 0 1 2-2h9" />
           </svg>
-          {copied ? 'Copied!' : 'Copy Full List'}
+          {copied ? 'Copied!' : copyFailed ? 'Copy blocked — select manually' : 'Copy Full List'}
         </button>
+        {onOrderPlaced && (
+          <button className="hcc-share primary" onClick={onOrderPlaced} disabled={busy} style={{ height: 50, fontSize: 16 }}>
+            {busy ? 'Updating…' : 'Mark Order Placed ✓'}
+          </button>
+        )}
       </div>
     </div>
   )

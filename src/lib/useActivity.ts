@@ -4,6 +4,7 @@ import type { Member } from './usePools'
 
 export type MyOrder = {
   id: string
+  creator_id: string
   platform: string
   title?: string | null
   items: string
@@ -18,30 +19,28 @@ export type MyOrder = {
   my_payment_status: string | null
 }
 
-const ONGOING_STATUSES = ['locked', 'placed', 'out_for_delivery', 'received', 'distributed']
+const ONGOING_STATUSES = ['locked', 'ordering', 'placed', 'out_for_delivery', 'received', 'distributed']
 const PAST_STATUSES = ['completed']
 
+const BASE = 'id, creator_id, platform, title, items, est_cart_value, free_delivery_threshold, delivery_fee, window_start, window_end, status'
+// richest query first; fall back if the profiles relation is unavailable
+const SELECTS = [
+  `${BASE}, group_order_participants(user_id, profiles(display_name, avatar_url))`,
+  `${BASE}, group_order_participants(user_id)`,
+]
+
 async function fetchMine(uid: string, cid: string, statuses: string[]): Promise<MyOrder[]> {
-  // step 1: my participant rows for this community, filtered by order status
   const { data: mine, error: e1 } = await supabase
     .from('group_order_participants')
     .select('order_request_id, share_amount, payment_status, order_requests!inner(id, community_id, status)')
     .eq('user_id', uid)
     .eq('order_requests.community_id', cid)
     .in('order_requests.status', statuses)
-  if (e1 || !mine?.length) return []
+  if (e1) { console.warn('useActivity mine:', e1.message); return [] }
+  if (!mine?.length) return []
 
   const ids = mine.map((m: any) => m.order_request_id)
   const mineMap = new Map(mine.map((m: any) => [m.order_request_id, m]))
-
-  // step 2: full order rows + all participants (for avatars), richest select first
-  const PARTS = [
-    'group_order_participants(user_id, profiles(display_name, avatar_url))',
-    'group_order_participants(user_id, profiles(display_name))',
-    'group_order_participants(user_id)',
-  ]
-  const BASE = 'id, platform, items, est_cart_value, free_delivery_threshold, delivery_fee, window_start, window_end, status'
-  const SELECTS = [`${BASE}, title`, BASE].flatMap((b) => PARTS.map((p) => `${b}, ${p}`))
 
   for (const sel of SELECTS) {
     const { data, error } = await supabase.from('order_requests').select(sel).in('id', ids)
@@ -52,6 +51,7 @@ async function fetchMine(uid: string, cid: string, statuses: string[]): Promise<
         my_payment_status: mineMap.get(o.id)?.payment_status ?? null,
       })) as MyOrder[]
     }
+    console.warn('useActivity select failed:', error.message)
   }
   return []
 }
@@ -62,7 +62,7 @@ export function useActivity(cid: string | undefined, uid: string | undefined) {
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
-    if (!cid || !uid) return
+    if (!cid || !uid) { setLoading(false); return }
     const [o, p] = await Promise.all([
       fetchMine(uid, cid, ONGOING_STATUSES),
       fetchMine(uid, cid, PAST_STATUSES),
@@ -75,14 +75,16 @@ export function useActivity(cid: string | undefined, uid: string | undefined) {
   }, [cid, uid])
 
   useEffect(() => {
-    if (!cid || !uid) return
+    if (!cid || !uid) { setLoading(false); return }
     load()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const debounced = () => { clearTimeout(timer); timer = setTimeout(load, 400) }
     const ch = supabase.channel(`activity-${cid}-${uid}-${Math.random().toString(36).slice(2)}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_requests', filter: `community_id=eq.${cid}` }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'group_order_participants' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_requests', filter: `community_id=eq.${cid}` }, debounced)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'group_order_participants' }, debounced)
       .subscribe()
-    return () => { supabase.removeChannel(ch) }
+    return () => { clearTimeout(timer); supabase.removeChannel(ch) }
   }, [cid, uid, load])
 
-  return { ongoing, past, loading }
+  return { ongoing, past, loading, reload: load }
 }

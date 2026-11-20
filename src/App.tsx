@@ -1,8 +1,5 @@
-import PoolRoom from './pages/PoolRoom'
-import HostDemo from "./HostDemo";
-import CreateOrder from './pages/CreateOrder'
 import type { ReactElement } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -11,12 +8,17 @@ import JoinCommunity from './pages/JoinCommunity'
 import Profile from './pages/Profile'
 import ActivePools from './pages/ActivePools'
 import Activity from './pages/Activity'
-import Placeholder from './pages/Placeholder'
+import CreateOrder from './pages/CreateOrder'
+import PoolRoom from './pages/PoolRoom'
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { user, loading } = useAuth()
+  const location = useLocation()
   if (loading) return <p className="muted" style={{ padding: 16 }}>Loading…</p>
-  return user ? children : <Navigate to="/login" replace />
+  // remember the page the user wanted (e.g. a shared /pool/:id link) so Login can return there
+  return user
+    ? children
+    : <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
 }
 
 export default function App() {
@@ -24,12 +26,8 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-  <Route path="/login" element={<Login />} />
-
-  {/* Host Demo - Visual Testing */}
-  <Route path="/demo/host" element={<HostDemo />} />
-
-  <Route element={<RequireAuth><Layout /></RequireAuth>}>
+          <Route path="/login" element={<Login />} />
+          <Route element={<RequireAuth><Layout /></RequireAuth>}>
             <Route path="/" element={<Home />} />
             <Route path="/join" element={<JoinCommunity />} />
             <Route path="/pools" element={<ActivePools />} />

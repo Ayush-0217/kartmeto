@@ -1,21 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import type { AppCtx } from '../lib/useCommunity'
 import { useAuth } from '../auth/AuthProvider'
 import { useOrderRoom } from '../lib/useOrderRoom'
+import { useHandover } from '../lib/useHandover'
 import { profOf, colorOf, fmtLeft } from '../lib/pool'
 import { platformOf } from '../lib/platforms'
 import { supabase } from '../lib/supabase'
+import { aggregateItems } from '../lib/cart'
 import PlatformLogo from '../components/PlatformLogo'
 import AddItemsModal from '../components/AddItemsModal'
 import InviteSheet from '../components/InviteSheet'
+import HostCommandCenter, { type HostMember } from '../components/HostCommandCenter'
+import CartToBuild from '../components/CartToBuild'
+import SmartHandover, { type HandoverRoom } from '../components/SmartHandover'
 
 function parseItems(text: string): { name: string; price: number; qty: number }[] {
   try { const v = JSON.parse(text || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
 }
 const itemsTotal = (items: { price: number; qty: number }[]) => items.reduce((s, it) => s + it.price * it.qty, 0)
-
-// Server messages say "captain" (DB naming); users should see "host"
 const hostWording = (msg: string) => msg.replace(/captain/gi, (m) => (m[0] === 'C' ? 'Host' : 'host'))
 
 function BackIcon() {
@@ -40,6 +43,11 @@ export default function PoolRoom() {
   const { community } = useOutletContext<AppCtx>()
   const { user } = useAuth()
   const { order, participants, captainUpi: hostUpi, loading, notFound, reload } = useOrderRoom(id)
+  const { myPin, hostRoom, info, reloadHandover } = useHandover(
+    id,
+    order?.status,
+    !!order && user?.id === order.creator_id,
+  )
 
   const [now, setNow] = useState(Date.now())
   const [showItems, setShowItems] = useState(false)
@@ -48,12 +56,16 @@ export default function PoolRoom() {
   const [feeInput, setFeeInput] = useState('')
   const [thrInput, setThrInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  // Consolidate all items for CartToBuild
+  const cartLines = useMemo(() => aggregateItems(participants.map((p) => p.items_text)), [participants])
 
   if (loading) return <p className="muted" style={{ padding: 16 }}>Loading…</p>
   if (notFound || !order) return (
@@ -76,10 +88,9 @@ export default function PoolRoom() {
   const msLeft = new Date(order.window_end).getTime() - now
   const hostProf = profOf({ user_id: order.creator_id, profiles: participants.find((p) => p.user_id === order.creator_id)?.profiles } as any)
   const hostName = hostProf?.display_name ?? 'Host'
-  // Money the host should collect from other members (their shares)
   const collectTotal = participants.filter((p) => p.user_id !== order.creator_id).reduce((s, p) => s + p.share_amount, 0)
+  const gateName = `${community?.name ?? 'Hostel'} Main Gate`
 
-  // Run an RPC, show its error text if it fails, reload on success
   async function run(fn: string, args: Record<string, unknown>) {
     setBusy(true)
     setErr(null)
@@ -93,14 +104,55 @@ export default function PoolRoom() {
   const joinPool = () => run('join_order', { p_order_id: order.id })
   const leavePool = () => run('leave_order', { p_order_id: order.id })
   const iHavePaid = () => run('mark_paid', { p_order_id: order.id })
-  const confirmPayment = (uid: string) => run('captain_confirm_payment', { p_order_id: order.id, p_user_id: uid })
   const advance = (status: string) => run('captain_advance_status', { p_order_id: order.id, p_new_status: status })
+
+  async function confirmPayment(uid: string) {
+    setBusyId(uid)
+    await run('captain_confirm_payment', { p_order_id: order.id, p_user_id: uid })
+    setBusyId(null)
+  }
+
+  // Server-side removal: only unpaid members, only while locked, records the kick
+  // and raises the free-delivery SOS if the cart drops below the limit.
+  async function removeMember(uid: string) {
+    setBusyId(uid)
+    setErr(null)
+    const { error } = await supabase.rpc('remove_unpaid_member', { p_order_id: order!.id, p_user_id: uid })
+    setBusyId(null)
+    if (error) setErr(hostWording(error.message))
+    else reload()
+  }
+
+  async function handleOrderPlaced() {
+    const ok = await advance('placed')
+    if (ok) navigate('/activity')
+  }
+
+  async function handleConfirmHandover(uid: string, pin: string): Promise<string | null> {
+    const { error } = await supabase.rpc('confirm_handover', {
+      p_order_id: order!.id,
+      p_user_id: uid,
+      p_pin: pin,
+    })
+    if (error) return hostWording(error.message)
+    await reloadHandover()
+    reload()
+    return null
+  }
+
+  async function handleClearDue(uid: string): Promise<string | null> {
+    const { error } = await supabase.rpc('clear_micro_due', { p_order_id: order!.id, p_user_id: uid })
+    if (error) return hostWording(error.message)
+    await reloadHandover()
+    return null
+  }
 
   function payNow() {
     if (!hostUpi || !me) return
     const url = `upi://pay?pa=${encodeURIComponent(hostUpi)}&pn=${encodeURIComponent(hostName)}&am=${me.share_amount}&cu=INR&tn=${encodeURIComponent('KartMeto pool ' + order!.id.slice(0, 6))}`
     window.location.href = url
   }
+
   async function saveUpi() {
     if (!upiInput.trim()) return
     setErr(null)
@@ -108,21 +160,165 @@ export default function PoolRoom() {
     if (error) { setErr(hostWording(error.message)); return }
     reload()
   }
+
   async function saveFee() {
     const fee = Number(feeInput || order!.delivery_fee)
-    const thr = Number(thrInput || order!.free_delivery_threshold || 0)
-    if (Number.isNaN(fee) || Number.isNaN(thr)) { setErr('Amount sahi daalo'); return }
+    const thrRaw = thrInput !== '' ? Number(thrInput) : (order!.free_delivery_threshold ?? 0)
+    if (Number.isNaN(fee) || Number.isNaN(thrRaw)) { setErr('Amount sahi daalo'); return }
+    const thr = thrRaw > 0 ? thrRaw : null // 0 means "no free-delivery limit"
     if (await run('set_order_fee', { p_order_id: order!.id, p_fee: fee, p_threshold: thr })) {
       setFeeInput(''); setThrInput('')
     }
   }
 
-  // "locked" aur "ordering" dono collection/preparation states hain — banner in dono me dikhna chahiye
-  const lockedOrPlaced = ['locked', 'ordering', 'placed'].includes(order.status)
-  const ofd = order.status === 'out_for_delivery'
-  const doneStates = ['received', 'distributed', 'completed'].includes(order.status)
+  // --- HOST DEDICATED VIEWS ---
 
-  // Payment block for a member (never shown to the host)
+  // 1. LOCKED -> HostCommandCenter
+  if (isHost && order.status === 'locked') {
+    const members: HostMember[] = participants.map((p) => {
+      const prof = profOf(p)
+      return {
+        userId: p.user_id,
+        name: prof?.display_name ?? 'Member',
+        avatarUrl: prof?.avatar_url ?? null,
+        joinedAt: p.joined_at,
+        status: p.payment_status,
+        isHost: p.user_id === order.creator_id,
+      }
+    })
+    const pendingCount = members.filter((m) => !m.isHost && m.status !== 'confirmed').length
+    const sosActive = !!order.sos_until && !order.sos_resolved
+    const sosLeft = order.sos_until ? new Date(order.sos_until).getTime() - now : 0
+    const sosShort = order.free_delivery_threshold
+      ? Math.max(0, Math.ceil(order.free_delivery_threshold - order.est_cart_value))
+      : 0
+
+    return (
+      <div style={{ paddingTop: 12, paddingBottom: 140 }}>
+        <div className="room-topbar" style={{ marginBottom: 8 }}>
+          <button className="room-back" onClick={() => navigate('/activity')}><BackIcon /></button>
+          <span className="room-title">{plat.name} Pool #{order.id.slice(0, 4).toUpperCase()}</span>
+          <button className="room-back" onClick={() => setShowInvite(true)}><ShareIcon /></button>
+        </div>
+        {err && <p className="error" style={{ marginBottom: 10 }}>{err}</p>}
+
+        {sosActive && (
+          <div className="hcc-bump" style={{ marginBottom: 12 }}>
+            <b>Free delivery at risk: cart is ₹{sosShort} short.</b>
+            <span>
+              {sosLeft > 0
+                ? `Add items worth ₹${sosShort} in the ${plat.name} app yourself (${Math.ceil(sosLeft / 1000)}s left).`
+                : 'Time is up. If you could not cover it, the delivery fee is split among members.'}
+            </span>
+            <button disabled={busy} onClick={() => run('resolve_sos', { p_order_id: order.id, p_covered: true })}>
+              I covered it
+            </button>
+            {sosLeft <= 3000 && (
+              <button disabled={busy} onClick={() => run('resolve_sos', { p_order_id: order.id, p_covered: false })}>
+                Split fee among members
+              </button>
+            )}
+          </div>
+        )}
+
+        <HostCommandCenter
+          members={members}
+          finalFee={perPersonFee}
+          saved={savedEst}
+          threshold={order.free_delivery_threshold}
+          cartTotal={order.est_cart_value}
+          busyId={busyId}
+          onConfirm={confirmPayment}
+          onRemove={removeMember}
+          onOpenProfile={() => {}}
+          onShare={() => setShowInvite(true)}
+        />
+        <div style={{ marginTop: 16 }}>
+          {pendingCount > 0 && (
+            <p className="muted" style={{ marginBottom: 8, fontSize: 13 }}>
+              Waiting on {pendingCount} payment{pendingCount > 1 ? 's' : ''} to be confirmed.
+            </p>
+          )}
+          <button className="cta" disabled={busy || pendingCount > 0 || sosActive} onClick={() => advance('ordering')}>
+            {busy ? 'Starting…' : 'All Paid • Build Cart →'}
+          </button>
+        </div>
+        {showInvite && (
+          <InviteSheet orderId={order.id} platformName={plat.name} communityName={community?.name ?? ''} onClose={() => setShowInvite(false)} />
+        )}
+      </div>
+    )
+  }
+
+  // 2. ORDERING -> CartToBuild (redirects to /activity when placed)
+  if (isHost && order.status === 'ordering') {
+    return (
+      <div style={{ paddingTop: 8 }}>
+        {err && <p className="error" style={{ marginBottom: 10 }}>{err}</p>}
+        <CartToBuild
+          lines={cartLines}
+          memberCount={participants.length}
+          store={plat.name}
+          savedEst={savedEst}
+          hostel={community?.name ?? 'Hostel Block A'}
+          onBack={() => navigate('/activity')}
+          onOrderPlaced={handleOrderPlaced}
+          busy={busy}
+        />
+      </div>
+    )
+  }
+
+  // 3. RECEIVED -> SmartHandover
+  if (isHost && order.status === 'received') {
+    const rooms: HandoverRoom[] = info.map((h) => {
+      const p = participants.find((x) => x.user_id === h.uid)
+      const items = p ? parseItems(p.items_text) : []
+      return {
+        userId: h.uid,
+        room: h.room,
+        name: (p && profOf(p)?.display_name) || 'Member',
+        summary: items.map((i) => `${i.name} x${i.qty}`).join(', ') || 'Pool items',
+        delivered: !!h.handed_at,
+        due: h.micro_cleared ? 0 : h.micro_due,
+      }
+    })
+    const allDelivered = rooms.every((r) => r.delivered)
+
+    return (
+      <div style={{ paddingTop: 12, paddingBottom: 140 }}>
+        <div className="room-topbar" style={{ marginBottom: 8 }}>
+          <button className="room-back" onClick={() => navigate('/activity')}><BackIcon /></button>
+          <span className="room-title">Handover • #{order.id.slice(0, 4).toUpperCase()}</span>
+          <span style={{ width: 20 }} />
+        </div>
+        {err && <p className="error" style={{ marginBottom: 10 }}>{err}</p>}
+        <SmartHandover rooms={rooms} ready={true} onConfirm={handleConfirmHandover} onClearDue={handleClearDue} />
+        <div style={{ marginTop: 16 }}>
+          {!allDelivered && (
+            <p className="muted" style={{ marginBottom: 8, fontSize: 13 }}>Confirm every handover before completing.</p>
+          )}
+          <button
+            className="cta"
+            disabled={busy || !allDelivered}
+            onClick={async () => {
+              if (await advance('completed')) navigate('/activity')
+            }}
+          >
+            {busy ? 'Completing…' : 'Mark Completed'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // --- STANDARD OPEN / MEMBER / TRACKING VIEW ---
+  const ofd = order.status === 'out_for_delivery'
+  const arrived = order.status === 'received'
+  const completed = order.status === 'completed'
+  const showTimeline = ['placed', 'out_for_delivery', 'received'].includes(order.status)
+  const showBill = ['locked', 'ordering', 'placed', 'out_for_delivery', 'received'].includes(order.status)
+
   const memberPayBlock = (btnLabel: string) => (
     <>
       {me?.payment_status === 'unpaid' && (
@@ -151,7 +347,7 @@ export default function PoolRoom() {
             <div className="room-card-title">{order.title || `${community?.name ?? ''} Common Order`}</div>
             <div className="muted" style={{ fontSize: 13 }}>Hosted by {hostName}</div>
           </div>
-          {!doneStates && !ofd && (
+          {order.status === 'open' && (
             <div className="room-timer">⏱ {msLeft > 0 ? fmtLeft(msLeft) : '00:00'} left</div>
           )}
         </div>
@@ -185,25 +381,24 @@ export default function PoolRoom() {
           </div>
         )}
 
-        {lockedOrPlaced && order.status === 'placed' && (
-          <div className="locked-banner">
-            <span className="lb-check">✓</span>
-            <div>
-              <div className="lb-title">Pool Locked & Order Placed!</div>
-              <div className="muted" style={{ fontSize: 13 }}>{hostName} has placed the {plat.name} order.</div>
-            </div>
-          </div>
-        )}
-
-        {ofd && (
+        {showTimeline && (
           <ol className="timeline" style={{ marginTop: 14 }}>
-            <li className="tl-step done"><span className="tl-dot">✓</span><div className="tl-text"><div className="tl-title">Pool Locked & Order Placed</div></div></li>
-            <li className="tl-step active"><span className="tl-dot"><span className="tl-pip" /></span><div className="tl-text"><div className="tl-title">Out for Delivery by {plat.name} rider</div></div></li>
-            <li className="tl-step pending"><span className="tl-dot" /><div className="tl-text"><div className="tl-title">Arriving at Hostel Main Gate</div></div></li>
+            <li className="tl-step done">
+              <span className="tl-dot">✓</span>
+              <div className="tl-text"><div className="tl-title">Pool Locked & Order Placed</div></div>
+            </li>
+            <li className={`tl-step ${arrived ? 'done' : ofd ? 'active' : 'pending'}`}>
+              <span className="tl-dot">{arrived ? '✓' : ofd ? <span className="tl-pip" /> : null}</span>
+              <div className="tl-text"><div className="tl-title">Out for Delivery by {plat.name} rider</div></div>
+            </li>
+            <li className={`tl-step ${arrived ? 'active' : 'pending'}`}>
+              <span className="tl-dot">{arrived ? <span className="tl-pip" /> : null}</span>
+              <div className="tl-text"><div className="tl-title">Arriving at {gateName}</div></div>
+            </li>
           </ol>
         )}
 
-        {doneStates && (
+        {completed && (
           <div className="locked-banner">
             <span className="lb-check">✓</span>
             <div className="lb-title">Delivered</div>
@@ -253,7 +448,7 @@ export default function PoolRoom() {
           {!me && <button className="cta" disabled={busy || msLeft <= 0} onClick={joinPool}>{busy ? 'Joining…' : 'Join Pool'}</button>}
 
           {me && myItems.length === 0 && (
-            <button className="add-item-btn" style={{ margin: 0 }} onClick={() => setShowItems(true)}>+ Add your items from {plat.name}</button>
+            <button className="add-item-btn" style={{ margin: 0 }} disabled={msLeft <= 0} onClick={() => setShowItems(true)}>+ Add your items from {plat.name}</button>
           )}
 
           {me && myItems.length > 0 && (
@@ -267,7 +462,7 @@ export default function PoolRoom() {
                 <div className="sum-row"><span>Your Split Delivery Fee (est.)</span><b>₹{me.share_amount - itemsTotal(myItems)}</b></div>
                 <div className="sum-row" style={{ fontSize: 16 }}><span>Total</span><b className="save">₹{me.share_amount}</b></div>
               </div>
-              <button className="cta-sm outline" style={{ marginTop: 10 }} onClick={() => setShowItems(true)}>Edit items</button>
+              <button className="cta-sm outline" style={{ marginTop: 10 }} disabled={msLeft <= 0} onClick={() => setShowItems(true)}>Edit items</button>
 
               {isHost ? (
                 <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
@@ -290,7 +485,7 @@ export default function PoolRoom() {
         </>
       )}
 
-      {(lockedOrPlaced || ofd) && me && myItems.length > 0 && (
+      {showBill && me && myItems.length > 0 && (
         <div className="pay-card" style={{ marginTop: 16 }}>
           <div className="pay-title">Bill & Split Breakdown</div>
           <div className="sum-row"><span>Your Share</span><b>₹{itemsTotal(myItems)} (Items) + ₹{me.share_amount - itemsTotal(myItems)} (Delivery)</b></div>
@@ -305,7 +500,35 @@ export default function PoolRoom() {
         </div>
       )}
 
-      {isHost && (
+      {/* Member handover code: fetched via my_handover_pins(), never from the shared participants query */}
+      {!isHost && me && ['placed', 'out_for_delivery', 'received'].includes(order.status) && (
+        <div className="hov-mypin" style={{ marginTop: 16 }}>
+          <b>Your Handover Code</b>
+          {me.handed_over_at ? (
+            <div className="pay-badge ok">✓ Items handed over</div>
+          ) : myPin ? (
+            <>
+              <div className="hov-pin static">{[...myPin].map((d, i) => <span key={i}>{d}</span>)}</div>
+              <p className="muted" style={{ fontSize: 13 }}>
+                {arrived
+                  ? `Order arrived. Show this code to ${hostName}${hostRoom ? ` (Room ${hostRoom})` : ''} to collect your items.`
+                  : 'Keep this ready. Share it only when your items are handed to you.'}
+              </p>
+              {me.micro_due > 0 && !me.micro_due_cleared && (
+                <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+                  Also pay ₹{me.micro_due} extra delivery fee to the host at handover (the free-delivery limit was missed).
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+              {me.share_amount > 0 ? 'Your code will appear here shortly.' : 'No items in this pool, so no code is needed.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {isHost && order.status === 'open' && (
         <div className="capt-panel">
           <div className="capt-head">Host Panel</div>
 
@@ -319,16 +542,14 @@ export default function PoolRoom() {
             </div>
           )}
 
-          {order.status === 'open' && (
-            <div style={{ marginBottom: 14 }}>
-              <label className="item-label">Delivery fee and free-delivery limit (₹)</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input className="item-input" inputMode="numeric" value={feeInput} onChange={(e) => setFeeInput(e.target.value)} placeholder={`Fee ${order.delivery_fee}`} />
-                <input className="item-input" inputMode="numeric" value={thrInput} onChange={(e) => setThrInput(e.target.value)} placeholder={`Limit ${order.free_delivery_threshold ?? 0}`} />
-                <button className="cta-sm" style={{ width: 90, margin: 0 }} disabled={busy} onClick={saveFee}>Set</button>
-              </div>
+          <div style={{ marginBottom: 14 }}>
+            <label className="item-label">Delivery fee and free-delivery limit (₹)</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="item-input" inputMode="numeric" value={feeInput} onChange={(e) => setFeeInput(e.target.value)} placeholder={`Fee ${order.delivery_fee}`} />
+              <input className="item-input" inputMode="numeric" value={thrInput} onChange={(e) => setThrInput(e.target.value)} placeholder={`Limit ${order.free_delivery_threshold ?? 0}`} />
+              <button className="cta-sm" style={{ width: 90, margin: 0 }} disabled={busy} onClick={saveFee}>Set</button>
             </div>
-          )}
+          </div>
 
           <div className="sum-row" style={{ marginBottom: 8 }}>
             <span>Collect from members</span><b className="save">₹{collectTotal}</b>
@@ -350,35 +571,30 @@ export default function PoolRoom() {
             )
           })}
 
-          {/* open -> locked: pool lock karo, members se payment collection shuru */}
-          {order.status === 'open' && (
-            <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('locked')}>
-              Lock Pool (Start Collecting Payments)
-            </button>
-          )}
+          <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('locked')}>
+            Lock Pool
+          </button>
+        </div>
+      )}
 
-          {/* locked -> ordering: sab members ka payment confirmed hone ke baad hi ye allowed hoga (DB check karta hai) */}
-          {order.status === 'locked' && (
-            <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('ordering')}>
-              Start Ordering
-            </button>
-          )}
-
-          {/* ordering -> placed: host ne actual {plat.name} app mein order place kar diya */}
-          {order.status === 'ordering' && (
-            <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('placed')}>
-              Mark Order Placed
-            </button>
-          )}
-
-          {order.status === 'placed' && <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('out_for_delivery')}>Mark Out for Delivery</button>}
-          {order.status === 'out_for_delivery' && <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('received')}>Order Arrived</button>}
-          {order.status === 'received' && <button className="cta" style={{ marginTop: 14 }} disabled={busy} onClick={() => advance('completed')}>Mark Completed</button>}
+      {isHost && (order.status === 'placed' || order.status === 'out_for_delivery') && (
+        <div className="capt-panel">
+          <div className="capt-head">Order Live — Track on Activity</div>
+          <button className="cta" style={{ marginTop: 10 }} onClick={() => navigate('/activity')}>
+            Go to Activity Page →
+          </button>
         </div>
       )}
 
       {showItems && order && (
-        <AddItemsModal orderId={order.id} platformName={plat.name} communityName={community?.name ?? ''} onClose={() => setShowItems(false)} onDone={() => { setShowItems(false); reload() }} />
+        <AddItemsModal
+          orderId={order.id}
+          platformName={plat.name}
+          communityName={community?.name ?? ''}
+          initialItems={myItems}
+          onClose={() => setShowItems(false)}
+          onDone={() => { setShowItems(false); reload() }}
+        />
       )}
       {showInvite && order && (
         <InviteSheet orderId={order.id} platformName={plat.name} communityName={community?.name ?? ''} onClose={() => setShowInvite(false)} />

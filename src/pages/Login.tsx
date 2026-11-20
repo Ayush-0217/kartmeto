@@ -1,11 +1,11 @@
-
-import { useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useRef, useState, type FormEvent } from 'react'
+import { Navigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
 
 export default function Login() {
   const { user } = useAuth()
+  const location = useLocation()
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -14,20 +14,23 @@ export default function Login() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [hostelName, setHostelName] = useState<string | null>(null)
+  const lookupSeq = useRef(0)
 
-  if (user && !busy) return <Navigate to="/" replace />
+  // Page the user originally wanted (set by RequireAuth), e.g. a shared pool link
+  const from = (location.state as { from?: string } | null)?.from
+  const dest = from && from.startsWith('/') && from !== '/login' ? from : '/'
+
+  if (user && !busy) return <Navigate to={dest} replace />
 
   async function handleCodeChange(val: string) {
     const clean = val.toUpperCase().trim()
     setHostelCode(clean)
     setError('')
 
+    const seq = ++lookupSeq.current
     if (clean.length >= 3) {
-      const { data, error } = await supabase.rpc(
-        'hostel_name_for_code',
-        { code: clean }
-      )
-
+      const { data, error } = await supabase.rpc('hostel_name_for_code', { code: clean })
+      if (seq !== lookupSeq.current) return // a newer keystroke superseded this lookup
       if (error) console.error('lookup error:', error.message)
       setHostelName((data as string | null) ?? null)
     } else {
@@ -57,7 +60,7 @@ export default function Login() {
       setError(
         error.message === 'Invalid login credentials'
           ? 'Email ya password galat hai.'
-          : error.message
+          : error.message,
       )
     }
   }
@@ -67,10 +70,9 @@ export default function Login() {
     setBusy(true)
     setError('')
 
-    const { data: name, error: lookupErr } = await supabase.rpc(
-      'hostel_name_for_code',
-      { code: hostelCode }
-    )
+    const { data: name, error: lookupErr } = await supabase.rpc('hostel_name_for_code', {
+      code: hostelCode,
+    })
 
     if (lookupErr) {
       setBusy(false)
@@ -103,22 +105,23 @@ export default function Login() {
       return
     }
 
-    const { error: je } = await supabase.rpc('join_community', {
-      code: hostelCode,
-    })
-
-    if (je) {
-      await supabase.auth.signOut()
-      setBusy(false)
-      setError(je.message)
-      return
-    }
-
+    // Save the room first so it is not lost if joining the hostel fails below
     if (room.trim() && su.user) {
-      await supabase.from('member_private').upsert({
+      const { error: roomErr } = await supabase.from('member_private').upsert({
         user_id: su.user.id,
         room_no: room.trim(),
       })
+      if (roomErr) console.warn('room save failed:', roomErr.message)
+    }
+
+    const { data: cid, error: je } = await supabase.rpc('join_community', { code: hostelCode })
+
+    if (je) {
+      // The account already exists, so do not sign out (re-signup would fail with "already registered").
+      // The user stays signed in and Layout sends them to /join to enter the passcode again.
+      console.warn('join_community failed:', je.message)
+    } else if (cid) {
+      try { localStorage.setItem('km_active_community', String(cid)) } catch { /* storage blocked */ }
     }
 
     setBusy(false)
@@ -127,14 +130,8 @@ export default function Login() {
   return (
     <div className="login">
       <div className="login-inner">
-
-        {/* Stacked transparent KartMeto logo */}
         <div className="login-brand">
-          <img
-  src="/logo-horizontal.png"
-  alt="KartMeto"
-  className="login-logo"
-/>
+          <img src="/logo-horizontal.png" alt="KartMeto" className="login-logo" />
         </div>
 
         <h2>Don&apos;t Order Alone.</h2>
@@ -203,19 +200,11 @@ export default function Login() {
           </button>
 
           {mode === 'login' ? (
-            <button
-              type="button"
-              className="textbtn"
-              onClick={() => switchMode('signup')}
-            >
+            <button type="button" className="textbtn" onClick={() => switchMode('signup')}>
               New here? Create an account
             </button>
           ) : (
-            <button
-              type="button"
-              className="textbtn"
-              onClick={() => switchMode('login')}
-            >
+            <button type="button" className="textbtn" onClick={() => switchMode('login')}>
               Already have an account? Log in
             </button>
           )}

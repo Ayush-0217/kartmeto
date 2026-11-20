@@ -82,7 +82,8 @@ export default function InviteSheet({ orderId, platformName, communityName, onCl
   const code = `KM-${orderId.slice(0, 4).toUpperCase()}`
   const link = `${window.location.origin}/pool/${orderId}`
   const spots = maxMembers ? Math.max(0, maxMembers - joined) : null
-  const shareText = `Join my ${platformName} Pool at ${communityName}! ${link}`
+  const where = communityName ? ` at ${communityName}` : ''
+  const shareText = `Join my ${platformName} Pool${where}! ${link}`
 
   async function copy(text: string, which: 'link' | 'code') {
     try {
@@ -94,10 +95,14 @@ export default function InviteSheet({ orderId, platformName, communityName, onCl
     }
   }
   function openWhatsApp() {
-    window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank')
+    window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank', 'noopener,noreferrer')
   }
   function openTelegram() {
-    window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(`Join my ${platformName} Pool at ${communityName}!`)}`, '_blank')
+    window.open(
+      `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(`Join my ${platformName} Pool${where}!`)}`,
+      '_blank',
+      'noopener,noreferrer',
+    )
   }
   async function moreApps() {
     if (navigator.share) {
@@ -117,7 +122,7 @@ export default function InviteSheet({ orderId, platformName, communityName, onCl
           <div className="inv-logo"><PlatformLogo p={plat} kind="tile" /></div>
           <div className="inv-card-text">
             <div className="inv-line">
-              Join my {platformName} Pool at {communityName}!{' '}
+              Join my {platformName} Pool{where}!{' '}
               {spots !== null
                 ? <>{spots} spot{spots === 1 ? '' : 's'} left to get <b className="inv-free">FREE</b> delivery.</>
                 : <>Spots open to get <b className="inv-free">FREE</b> delivery.</>}
@@ -129,11 +134,11 @@ export default function InviteSheet({ orderId, platformName, communityName, onCl
         <div className="inv-apps">
           <button className="inv-app" onClick={openWhatsApp}>
             <span className="inv-app-tile"><ShareImg src="/logos/whatsapp.png" alt="WhatsApp" /></span>
-            <span className="inv-app-label">{communityName} WhatsApp Group</span>
+            <span className="inv-app-label">WhatsApp</span>
           </button>
           <button className="inv-app" onClick={openTelegram}>
             <span className="inv-app-tile"><ShareImg src="/logos/telegram.png" alt="Telegram" /></span>
-            <span className="inv-app-label">Hostel Telegram</span>
+            <span className="inv-app-label">Telegram</span>
           </button>
           <button className="inv-app" onClick={() => copy(link, 'link')}>
             <span className="inv-app-tile"><LinkIcon /></span>
@@ -156,7 +161,7 @@ export default function InviteSheet({ orderId, platformName, communityName, onCl
           </button>
         </div>
 
-        <button className="inv-cancel" onClick={onClose}>Cancel</button>
+        <button className="inv-cancel" onClick={onClose}>Done</button>
       </div>
     </div>
   )
